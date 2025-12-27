@@ -1,0 +1,93 @@
+//@version=5
+strategy("EMA10 & MA20 Crossover Strategy - Cross Close 1h with SL & Trailing TP", overlay=true, initial_capital=10000, 
+     default_qty_type=strategy.percent_of_equity, default_qty_value=2000,  // 模拟20x杠杆
+     commission_type=strategy.commission.percent, commission_value=0.05, 
+     pyramiding=0, calc_on_every_tick=true)
+
+// 获取1小时数据
+ema10_1h = request.security(syminfo.tickerid, "60", ta.ema(close, 10))
+ma20_1h  = request.security(syminfo.tickerid, "60", ta.sma(close, 20))
+atr_1h   = request.security(syminfo.tickerid, "60", ta.atr(14))
+
+// 信号定义
+longEntry  = ta.crossover(ema10_1h, ma20_1h) and ema10_1h > ma20_1h
+shortEntry = ta.crossunder(ema10_1h, ma20_1h) and ema10_1h < ma20_1h
+
+// 固定止损ATR倍数
+stopLossATR = 1.5
+// 追踪止盈触发条件 & 回撤比例
+triggerProfit = 0.03    // 3% 触发追踪
+trailingGap   = 0.015   // 1.5% 追踪距离
+
+// 定义变量
+var float stopPrice = na
+var float trailStop = na
+var float entryPrice = na
+var bool trailingActive = false
+
+// 多头入场
+if longEntry
+    strategy.close("Short")
+    strategy.entry("Long", strategy.long)
+    entryPrice := close
+    stopPrice := close - stopLossATR * atr_1h
+    trailStop := na
+    trailingActive := false
+
+// 空头入场
+if shortEntry
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    entryPrice := close
+    stopPrice := close + stopLossATR * atr_1h
+    trailStop := na
+    trailingActive := false
+
+// 多头止损 & 追踪止盈
+if strategy.position_size > 0
+    // 普通止损
+    if close <= stopPrice
+        strategy.close("Long")
+        stopPrice := na
+        trailStop := na
+        trailingActive := false
+    else
+        // 激活追踪止盈
+        if not trailingActive and close >= entryPrice * (1 + triggerProfit)
+            trailingActive := true
+            trailStop := close * (1 - trailingGap)
+        // 更新追踪止盈
+        if trailingActive
+            trailStop := math.max(trailStop, close * (1 - trailingGap))
+            if close <= trailStop
+                strategy.close("Long")
+                stopPrice := na
+                trailStop := na
+                trailingActive := false
+
+// 空头止损 & 追踪止盈
+if strategy.position_size < 0
+    // 普通止损
+    if close >= stopPrice
+        strategy.close("Short")
+        stopPrice := na
+        trailStop := na
+        trailingActive := false
+    else
+        // 激活追踪止盈
+        if not trailingActive and close <= entryPrice * (1 - triggerProfit)
+            trailingActive := true
+            trailStop := close * (1 + trailingGap)
+        // 更新追踪止盈
+        if trailingActive
+            trailStop := math.min(trailStop, close * (1 + trailingGap))
+            if close >= trailStop
+                strategy.close("Short")
+                stopPrice := na
+                trailStop := na
+                trailingActive := false
+
+// 画线
+plot(ema10_1h, color=color.orange, title="EMA 10 (1h)")
+plot(ma20_1h,  color=color.blue,   title="MA 20 (1h)")
+plot(trailStop, color=color.green, style=plot.style_linebr, title="Trailing Stop")
